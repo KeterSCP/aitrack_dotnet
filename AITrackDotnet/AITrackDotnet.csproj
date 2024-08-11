@@ -7,4 +7,24 @@
         <Nullable>enable</Nullable>
     </PropertyGroup>
 
+    <ItemGroup>
+      <!-- OpenCV versions >= 4.8 are not compatible with current model for face detection -->
+      <PackageReference Include="Emgu.CV.Models" Version="4.7.0.5276" />
+<!--      <PackageReference Include="Emgu.CV.runtime.windows" Version="4.7.0.5276" />-->
+      <PackageReference Include="Emgu.CV.runtime.windows.cuda" Version="4.7.0.5276" />
+        
+      <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+      <PackageReference Include="Serilog" Version="4.0.1" />
+      <PackageReference Include="Serilog.Exceptions" Version="8.4.0" />
+      <PackageReference Include="Serilog.Extensions.Hosting" Version="8.0.0" />
+      <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
+      <PackageReference Include="System.Text.Json" Version="8.0.4" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <None Update="Models\face_detection.onnx">
+        <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      </None>
+    </ItemGroup>
+
 </Project>
