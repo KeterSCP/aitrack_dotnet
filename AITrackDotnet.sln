@@ -1,0 +1,22 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AITrackDotnet", "AITrackDotnet\AITrackDotnet.csproj", "{79DED818-6CED-48D3-B395-928E40E4916A}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution files", "Solution files", "{DA1830A8-EA17-41CC-88AF-C10D0032FDFC}"
+	ProjectSection(SolutionItems) = preProject
+		.gitignore = .gitignore
+		LICENSE = LICENSE
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{79DED818-6CED-48D3-B395-928E40E4916A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{79DED818-6CED-48D3-B395-928E40E4916A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{79DED818-6CED-48D3-B395-928E40E4916A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{79DED818-6CED-48D3-B395-928E40E4916A}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
