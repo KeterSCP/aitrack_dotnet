@@ -1,11 +1,10 @@
-﻿#define USE_CUDA
-
-using System.Drawing;
+﻿using System.Drawing;
 using Emgu.CV;
+#if USE_CUDA
 using Emgu.CV.Cuda;
+#endif
 using Emgu.CV.CvEnum;
 using Emgu.CV.Dnn;
-using Emgu.CV.Face;
 using Emgu.CV.Models;
 using Emgu.CV.Structure;
 using Microsoft.Extensions.Hosting;
