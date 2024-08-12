@@ -6,6 +6,15 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        
+        <PublishAot>true</PublishAot>
+        <InvariantGlobalization>true</InvariantGlobalization>
+        <DebuggerSupport>false</DebuggerSupport>
+        <DebugSymbols>False</DebugSymbols>
+        <DebugType>None</DebugType>
+        <!-- <StackTraceSupport>false</StackTraceSupport> -->
+        <!-- <UseSystemResourceKeys>true</UseSystemResourceKeys> -->
+        <!-- TODO: remove opencv_videoio_ffmpeg470_64.dll file after publish -->
     </PropertyGroup>
 
     <ItemGroup>
@@ -15,7 +24,8 @@
 
       <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
 
-      <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.18.0" />
+      <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.18.0" Condition="!$(DefineConstants.Contains('USE_CUDA'))" />
+      <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.18.0" Condition="$(DefineConstants.Contains('USE_CUDA'))" />
       <PackageReference Include="Serilog" Version="4.0.1" />
       <PackageReference Include="Serilog.Exceptions" Version="8.4.0" />
       <PackageReference Include="Serilog.Extensions.Hosting" Version="8.0.0" />

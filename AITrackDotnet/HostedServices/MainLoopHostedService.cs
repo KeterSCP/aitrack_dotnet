@@ -19,6 +19,7 @@ public class MainLoopHostedService : BackgroundService
     private static readonly float[] _onnxBuffer = new float[_onnxTensorDimensions[1] * _onnxTensorDimensions[2] * _onnxTensorDimensions[3]];
     private static readonly RunOptions _onnxRunOptions = new();
     private static readonly OrtValue _onnxInputTensor = OrtValue.CreateTensorValueFromMemory(_onnxBuffer, _onnxTensorDimensions);
+
     private static readonly Dictionary<string, OrtValue> _onnxInputs = new()
     {
         ["input"] = _onnxInputTensor
@@ -70,6 +71,19 @@ public class MainLoopHostedService : BackgroundService
         var resizeScaleX = (float)camera.Width / resizedWidth;
         var resizeScaleY = (float)camera.Height / resizedHeight;
 
+        using var sessionOptions =
+#if USE_CUDA
+            SessionOptions.MakeSessionOptionWithCudaProvider(deviceId: 0);
+#else
+            // ReSharper disable once UsingStatementResourceInitialization
+            new SessionOptions
+        {
+            GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_EXTENDED,
+            ExecutionMode = ExecutionMode.ORT_SEQUENTIAL,
+            InterOpNumThreads = 1,
+            IntraOpNumThreads = 1
+        };
+#endif
         using var session = new InferenceSession(@"models\lm_f.onnx", new SessionOptions
         {
             GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_EXTENDED,
@@ -122,7 +136,7 @@ public class MainLoopHostedService : BackgroundService
                 var faceRectWidth = faceWidth * resizeScaleX;
                 var faceRectHeight = faceHeight * resizeScaleY;
 
-                ProcFaceDetect(ref faceRectX, ref faceRectY, ref faceRectWidth, ref faceRectHeight, camera.Width, camera.Height);
+                ProcessDetectedFace(ref faceRectX, ref faceRectY, ref faceRectWidth, ref faceRectHeight, camera.Width, camera.Height);
 
                 var cropPatchSize = new Size((int)faceRectWidth - (int)faceRectX, (int)faceRectHeight - (int)faceRectY);
                 var cropCenter = new PointF((faceRectX + faceRectWidth) / 2, (faceRectY + faceRectHeight) / 2);
@@ -152,7 +166,7 @@ public class MainLoopHostedService : BackgroundService
                 float scaleX = (float)width / _onnxTensorDimensions[2];
                 float scaleY = (float)height / _onnxTensorDimensions[3];
 
-                ProcHeatmaps(outputTensor, (int)faceRectX, (int)faceRectY, scaleX, scaleY);
+                ProcessHeatmaps(outputTensor, (int)faceRectX, (int)faceRectY, scaleX, scaleY);
 
                 if (Preview)
                 {
@@ -252,7 +266,7 @@ public class MainLoopHostedService : BackgroundService
 #endif
     }
 
-    private static void ProcFaceDetect(ref float x0, ref float y0, ref float faceWidth, ref float faceHeight, float width, float height)
+    private static void ProcessDetectedFace(ref float x0, ref float y0, ref float faceWidth, ref float faceHeight, float width, float height)
     {
         int cropX1 = (int)(x0 - faceWidth * 0.1);
         int cropY1 = (int)(y0 - faceHeight * 0.1);
@@ -265,7 +279,7 @@ public class MainLoopHostedService : BackgroundService
         faceHeight = Math.Min((int)height, cropY2);
     }
 
-    private static void ProcHeatmaps(Span<float> heatmaps, int x0, int y0, float scaleX, float scaleY)
+    private static void ProcessHeatmaps(Span<float> heatmaps, int x0, int y0, float scaleX, float scaleY)
     {
         const int heatmapSize = 784; // 28 * 28;
 
