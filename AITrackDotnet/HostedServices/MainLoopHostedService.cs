@@ -1,4 +1,5 @@
 ﻿using System.Drawing;
+using System.Net.Sockets;
 using Emgu.CV;
 #if USE_CUDA
 using Emgu.CV.Cuda;
@@ -7,29 +8,26 @@ using Emgu.CV.CvEnum;
 using Emgu.CV.Dnn;
 using Emgu.CV.Structure;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using Microsoft.ML.OnnxRuntime;
+using Serilog;
 
 namespace AITrackDotnet.HostedServices;
 
 public class MainLoopHostedService : BackgroundService
 {
-    private readonly ILogger<MainLoopHostedService> _logger;
-    private static readonly long[] _onnxTensorDimensions = [1, 3, 224, 224];
-    private static readonly float[] _onnxBuffer = new float[_onnxTensorDimensions[1] * _onnxTensorDimensions[2] * _onnxTensorDimensions[3]];
-    private static readonly RunOptions _onnxRunOptions = new();
-    private static readonly OrtValue _onnxInputTensor = OrtValue.CreateTensorValueFromMemory(_onnxBuffer, _onnxTensorDimensions);
+    private static readonly long[] OnnxTensorDimensions = [1, 3, 224, 224];
+    private static readonly float[] OnnxBuffer = new float[OnnxTensorDimensions[1] * OnnxTensorDimensions[2] * OnnxTensorDimensions[3]];
+    private static readonly RunOptions OnnxRunOptions = new();
+    private static readonly OrtValue OnnxInputTensor = OrtValue.CreateTensorValueFromMemory(OnnxBuffer, OnnxTensorDimensions);
 
-    private static readonly Dictionary<string, OrtValue> _onnxInputs = new()
+    private static readonly double[] UdpDatagramOfDoubles = new double[6];
+    private static readonly byte[] UdpDatagramOfBytes = new byte[UdpDatagramOfDoubles.Length * sizeof(double)];
+
+    private static readonly Dictionary<string, OrtValue> OnnxInputs = new()
     {
-        ["input"] = _onnxInputTensor
+        ["input"] = OnnxInputTensor
     };
 
-    // Landmark positions: [[x,y], [x,y], [x,y], ...]
-    private static readonly float[] _landmarkCoords = new float[66 * 2];
-
-    // TODO: make this configurable
-    private const bool Preview = true;
     private const bool UseCuda =
 #if USE_CUDA
         true;
@@ -39,28 +37,21 @@ public class MainLoopHostedService : BackgroundService
 
     private static readonly string[] OnnxOutputNames = ["output"];
 
-    public MainLoopHostedService(ILogger<MainLoopHostedService> logger)
+    protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger = logger;
+        _ = Task.Run(() => ProcessFrames(stoppingToken), stoppingToken);
+        return Task.CompletedTask;
     }
 
-    protected override unsafe Task ExecuteAsync(CancellationToken stoppingToken)
+    private unsafe void ProcessFrames(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Main loop is running...");
+        Log.Information("Main loop is running...");
 
         using var camera = new VideoCapture(0, VideoCapture.API.DShow);
 
-        camera.Set(CapProp.Autofocus, 1);
-        camera.Set(CapProp.Fps, 30);
-        camera.Set(CapProp.FrameWidth, 640);
-        camera.Set(CapProp.FrameHeight, 480);
+        UpdateCameraProperties(camera);
 
-        float aspectRatio = (float)camera.Width / camera.Height;
-
-        const int resizedWidth = 114;
-        var resizedHeight = (int)(resizedWidth / aspectRatio);
-
-        var resizedSize = new Size(resizedWidth, resizedHeight);
+        var positionSolver = new PositionSolver(camera.Width, camera.Height, 56, 1.0f, 1.0f, 1.0f);
 
         using var mainMatCpu = new Mat();
         using var resizedMatCpu = new Mat();
@@ -68,8 +59,7 @@ public class MainLoopHostedService : BackgroundService
         using var resizedFaceMatCpu = new Mat();
         using var facesOutput = new Mat();
 
-        var resizeScaleX = (float)camera.Width / resizedWidth;
-        var resizeScaleY = (float)camera.Height / resizedHeight;
+        using var udpClient = new UdpClient(AppSettings.OpenTrackUdpClientHostName, AppSettings.OpenTrackUdpClientPort);
 
         using var sessionOptions =
 #if USE_CUDA
@@ -99,15 +89,24 @@ public class MainLoopHostedService : BackgroundService
         using var resizedFaceMatGpu = new GpuMat();
 #endif
 
+        UpdateResizeProperties(out var resizedSize, out var resizeScaleX, out var resizeScaleY, camera);
         using var faceDetector = CreateFaceDetector(UseCuda, resizedSize);
 
         while (!stoppingToken.IsCancellationRequested)
         {
             if (!camera.Read(mainMatCpu))
             {
-                _logger.LogWarning("Failed to read frame from camera.");
+                Log.Warning("Failed to read frame from camera.");
                 continue;
             }
+
+            FlipMat(
+#if USE_CUDA
+                mainMatGpu,
+#endif
+                mainMatCpu,
+                FlipType.Horizontal
+            );
 
             ResizeMat(
 #if USE_CUDA
@@ -126,24 +125,24 @@ public class MainLoopHostedService : BackgroundService
                 var facesPtr = (float*)facesOutput.DataPointer;
 
                 // Always get one face (first)
-                float x0 = facesPtr[0];
-                float y0 = facesPtr[1];
+                float faceTopLeftX = facesPtr[0];
+                float faceTopLeftY = facesPtr[1];
                 float faceWidth = facesPtr[2];
                 float faceHeight = facesPtr[3];
 
-                var faceRectX = x0 * resizeScaleX;
-                var faceRectY = y0 * resizeScaleY;
-                var faceRectWidth = faceWidth * resizeScaleX;
-                var faceRectHeight = faceHeight * resizeScaleY;
+                var scaledFaceTopLeftX = faceTopLeftX * resizeScaleX;
+                var scaledFaceTopLeftY = faceTopLeftY * resizeScaleY;
+                var scaledFaceWidth = faceWidth * resizeScaleX;
+                var scaledFaceHeight = faceHeight * resizeScaleY;
 
-                ProcessDetectedFace(ref faceRectX, ref faceRectY, ref faceRectWidth, ref faceRectHeight, camera.Width, camera.Height);
+                (FaceData.FaceCropTopLeft, FaceData.FaceCropBottomRight, FaceData.FaceCropSize) = GetFaceCrop(scaledFaceTopLeftX, scaledFaceTopLeftY, scaledFaceWidth, scaledFaceHeight, camera.Width, camera.Height);
 
-                var cropPatchSize = new Size((int)faceRectWidth - (int)faceRectX, (int)faceRectHeight - (int)faceRectY);
-                var cropCenter = new PointF((faceRectX + faceRectWidth) / 2, (faceRectY + faceRectHeight) / 2);
+                var cropPatchSize = new Size(FaceData.FaceCropBottomRight.X - FaceData.FaceCropTopLeft.X, FaceData.FaceCropBottomRight.Y - FaceData.FaceCropTopLeft.Y);
+                var cropCenter = new PointF((FaceData.FaceCropTopLeft.X + FaceData.FaceCropBottomRight.X) / 2f, (FaceData.FaceCropTopLeft.Y + FaceData.FaceCropBottomRight.Y) / 2f);
 
                 CvInvoke.GetRectSubPix(mainMatCpu, cropPatchSize, cropCenter, croppedFaceMatCpu);
 
-                ResizeAndConvert(
+                ResizeAndConvertMat(
 #if USE_CUDA
                     croppedFaceMatGpu,
                     resizedFaceMatGpu,
@@ -154,32 +153,50 @@ public class MainLoopHostedService : BackgroundService
                     DepthType.Cv32F
                 );
 
-                ImageProcessing.NormalizeAndTranspose(resizedFaceMatCpu, _onnxBuffer);
+                ImageProcessing.NormalizeAndTranspose(resizedFaceMatCpu, OnnxBuffer);
 
-                using var outputs = session.Run(runOptions: _onnxRunOptions, inputs: _onnxInputs, outputNames: OnnxOutputNames);
+                using var outputs = session.Run(runOptions: OnnxRunOptions, inputs: OnnxInputs, outputNames: OnnxOutputNames);
 
                 var outputTensor = outputs[0].GetTensorMutableDataAsSpan<float>();
 
-                int width = (int)faceRectWidth - (int)faceRectX;
-                int height = (int)faceRectHeight - (int)faceRectY;
+                float faceCropScaleX = (float)FaceData.FaceCropSize.Width / OnnxTensorDimensions[2];
+                float faceCropScaleY = (float)FaceData.FaceCropSize.Height / OnnxTensorDimensions[3];
 
-                float scaleX = (float)width / _onnxTensorDimensions[2];
-                float scaleY = (float)height / _onnxTensorDimensions[3];
+                ProcessHeatmaps(outputTensor, FaceData.FaceCropTopLeft.X, FaceData.FaceCropTopLeft.Y, faceCropScaleX, faceCropScaleY);
 
-                ProcessHeatmaps(outputTensor, (int)faceRectX, (int)faceRectY, scaleX, scaleY);
+                if (AppSettings.LandmarkDetectionNoiseFilter)
+                {
+                    EAFilter.Filter(FaceData.LandmarkCoords);
+                }
 
-                if (Preview)
+                positionSolver.SolveRotation();
+
+                if (AppSettings.OpenTrackUdpClientEnabled)
+                {
+                    UdpDatagramOfDoubles[0] = FaceData.Translation[1];
+                    UdpDatagramOfDoubles[1] = FaceData.Translation[0];
+                    UdpDatagramOfDoubles[2] = FaceData.Translation[2];
+                    UdpDatagramOfDoubles[3] = FaceData.Rotation[1];
+                    UdpDatagramOfDoubles[4] = FaceData.Rotation[0];
+                    UdpDatagramOfDoubles[5] = FaceData.Rotation[2];
+
+                    Buffer.BlockCopy(UdpDatagramOfDoubles, 0, UdpDatagramOfBytes, 0, UdpDatagramOfBytes.Length);
+
+                    udpClient.Send(UdpDatagramOfBytes);
+                }
+
+                if (AppSettings.Preview)
                 {
                     // // Draw landmarks
-                    for (int i = 0; i < 66; i++)
+                    for (int i = 0; i < FaceData.LandmarksCount; i++)
                     {
                         CvInvoke.Circle
                         (
                             img: mainMatCpu,
-                            center: new Point((int)_landmarkCoords[2 * i + 1], (int)_landmarkCoords[2 * i]),
-                            radius: 2,
+                            center: new Point((int)FaceData.LandmarkCoords[2 * i + 1], (int)FaceData.LandmarkCoords[2 * i]),
+                            radius: 1,
                             color: new MCvScalar(0, 255, 0),
-                            thickness: 2
+                            thickness: 1
                         );
                     }
 
@@ -189,28 +206,68 @@ public class MainLoopHostedService : BackgroundService
                         img: mainMatCpu,
                         rect: new Rectangle
                         (
-                            x: (int)faceRectX,
-                            y: (int)faceRectY,
-                            width: width,
-                            height: height
+                            x: FaceData.FaceCropTopLeft.X,
+                            y: FaceData.FaceCropTopLeft.Y,
+                            width: FaceData.FaceCropSize.Width,
+                            height: FaceData.FaceCropSize.Height
                         ),
                         color: new MCvScalar(255, 0, 0),
-                        thickness: 2
+                        thickness: 1
                     );
                 }
             }
 
-            if (Preview)
+            if (AppSettings.Preview)
             {
                 CvInvoke.Imshow("Camera", mainMatCpu);
                 CvInvoke.WaitKey(1);
             }
+
+            if (AppSettings.WasReloaded)
+            {
+                if (!AppSettings.Preview)
+                {
+                    CvInvoke.DestroyAllWindows();
+                }
+
+                if (AppSettings.NeedsCameraRestart)
+                {
+                    UpdateCameraProperties(camera);
+                    UpdateResizeProperties(out resizedSize, out resizeScaleX, out resizeScaleY, camera);
+
+                    AppSettings.NeedsCameraRestart = false;
+                }
+
+                faceDetector.InputSize = resizedSize;
+
+                AppSettings.WasReloaded = false;
+            }
         }
 
         CvInvoke.DestroyAllWindows();
-        _onnxRunOptions.Dispose();
-        _onnxInputTensor.Dispose();
-        return Task.CompletedTask;
+        OnnxRunOptions.Dispose();
+        OnnxInputTensor.Dispose();
+
+        Log.Information("Main loop is stopping...");
+    }
+
+    private static void UpdateResizeProperties(out Size resizedSize, out float resizeScaleX, out float resizeScaleY, VideoCapture cam)
+    {
+        var resizedWidth = AppSettings.FaceDetectionResizeTo;
+        var aspectRatio = (float)cam.Width / cam.Height;
+        var resizedHeight = (int)(resizedWidth / aspectRatio);
+
+        resizedSize = new Size(resizedWidth, resizedHeight);
+        resizeScaleX = (float)cam.Width / resizedWidth;
+        resizeScaleY = (float)cam.Height / resizedHeight;
+    }
+
+    private static void UpdateCameraProperties(VideoCapture cam)
+    {
+        cam.Set(CapProp.Autofocus, AppSettings.CameraAutoFocus ? 1 : 0);
+        cam.Set(CapProp.Fps, AppSettings.CameraFps);
+        cam.Set(CapProp.FrameWidth, AppSettings.CameraWidth);
+        cam.Set(CapProp.FrameHeight, AppSettings.CameraHeight);
     }
 
     private static FaceDetectorYN CreateFaceDetector(bool useCuda, Size inputSize)
@@ -225,6 +282,22 @@ public class MainLoopHostedService : BackgroundService
             backendId: useCuda ? Emgu.CV.Dnn.Backend.Cuda : Emgu.CV.Dnn.Backend.Default,
             targetId: useCuda ? Target.Cuda : Target.Cpu
         );
+    }
+
+    private static void FlipMat(
+#if USE_CUDA
+        GpuMat srcGpu,
+#endif
+        Mat srcCpu,
+        FlipType flipType)
+    {
+#if USE_CUDA
+        srcGpu.Upload(srcCpu);
+        CudaInvoke.Flip(srcGpu, srcGpu, flipType);
+        srcGpu.Download(srcCpu);
+#else
+        CvInvoke.Flip(srcCpu, srcCpu, flipType);
+#endif
     }
 
     private static void ResizeMat(
@@ -245,7 +318,7 @@ public class MainLoopHostedService : BackgroundService
 #endif
     }
 
-    private static void ResizeAndConvert(
+    private static void ResizeAndConvertMat(
 #if USE_CUDA
         GpuMat srcGpu,
         GpuMat dstGpu,
@@ -266,24 +339,30 @@ public class MainLoopHostedService : BackgroundService
 #endif
     }
 
-    private static void ProcessDetectedFace(ref float x0, ref float y0, ref float faceWidth, ref float faceHeight, float width, float height)
+    private static (Point TopLeft, Point BottomRight, Size Size) GetFaceCrop(float scaledFaceTopLeftX, float scaledFaceTopLeftY, float scaledFaceWidth, float scaledFaceHeight, float cameraWidth, float cameraHeight)
     {
-        int cropX1 = (int)(x0 - faceWidth * 0.1);
-        int cropY1 = (int)(y0 - faceHeight * 0.1);
-        int cropX2 = (int)(x0 + faceWidth + faceWidth * 0.1);
-        int cropY2 = (int)(y0 + faceHeight + faceHeight * 0.1f); // force a little taller BB so the chin tends to be covered
+        // Force a little wider bounding box so the chin tends to be covered - 10% wider
+        int cropX1 = (int)(scaledFaceTopLeftX - scaledFaceWidth * 0.1);
+        int cropY1 = (int)(scaledFaceTopLeftY - scaledFaceHeight * 0.1);
+        int cropX2 = (int)(scaledFaceTopLeftX + scaledFaceWidth + scaledFaceWidth * 0.1);
+        int cropY2 = (int)(scaledFaceTopLeftY + scaledFaceHeight + scaledFaceHeight * 0.1f);
 
-        x0 = Math.Max(0, cropX1);
-        y0 = Math.Max(0, cropY1);
-        faceWidth = Math.Min((int)width, cropX2);
-        faceHeight = Math.Min((int)height, cropY2);
+        var topLeftX = Math.Max(0, cropX1);
+        var topLeftY = Math.Max(0, cropY1);
+        var bottomRightX = Math.Min((int)cameraWidth, cropX2);
+        var bottomRightY = Math.Min((int)cameraHeight, cropY2);
+
+        var cropWidth = bottomRightX - topLeftX;
+        var cropHeight = bottomRightY - topLeftY;
+
+        return (new Point(topLeftX, topLeftY), new Point(bottomRightX, bottomRightY), new Size(cropWidth, cropHeight));
     }
 
-    private static void ProcessHeatmaps(Span<float> heatmaps, int x0, int y0, float scaleX, float scaleY)
+    private static void ProcessHeatmaps(Span<float> heatmaps, int faceCropTopLeftX, int faceCropTopLeftY, float faceCropScaleX, float scaleY)
     {
         const int heatmapSize = 784; // 28 * 28;
 
-        for (int landmark = 0; landmark < 66; landmark++)
+        for (int landmark = 0; landmark < FaceData.LandmarksCount; landmark++)
         {
             int offset = heatmapSize * landmark;
             int argMax = -100;
@@ -307,11 +386,11 @@ public class MainLoopHostedService : BackgroundService
             var offX = (int)MathF.Floor(res * (Logit(heatmaps[66 * heatmapSize + offset + argMax])) + 0.1f);
             var offY = (int)MathF.Floor(res * (Logit(heatmaps[2 * 66 * heatmapSize + offset + argMax])) + 0.1f);
 
-            float lmX = y0 + scaleY * (res * (x / 27.0f) + offX);
-            float lmY = x0 + scaleX * (res * (y / 27.0f) + offY);
+            float lmX = faceCropTopLeftY + scaleY * (res * (x / 27.0f) + offX);
+            float lmY = faceCropTopLeftX + faceCropScaleX * (res * (y / 27.0f) + offY);
 
-            _landmarkCoords[2 * landmark] = lmX;
-            _landmarkCoords[2 * landmark + 1] = lmY;
+            FaceData.LandmarkCoords[2 * landmark] = lmX;
+            FaceData.LandmarkCoords[2 * landmark + 1] = lmY;
         }
     }
 

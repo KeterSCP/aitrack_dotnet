@@ -6,43 +6,62 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        
+
         <PublishAot>true</PublishAot>
         <InvariantGlobalization>true</InvariantGlobalization>
         <DebuggerSupport>false</DebuggerSupport>
+
+        <!-- Uncomment to test CUDA version -->
+<!--        <DefineConstants>USE_CUDA</DefineConstants>-->
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(Configuration)'=='Release'">
         <DebugSymbols>False</DebugSymbols>
         <DebugType>None</DebugType>
         <!-- <StackTraceSupport>false</StackTraceSupport> -->
         <!-- <UseSystemResourceKeys>true</UseSystemResourceKeys> -->
-        <!-- TODO: remove opencv_videoio_ffmpeg470_64.dll file after publish -->
     </PropertyGroup>
 
     <ItemGroup>
-      <!-- OpenCV versions >= 4.8 are not compatible with current model for face detection -->
-      <PackageReference Include="Emgu.CV.runtime.windows" Version="4.7.0.5276" Condition="!$(DefineConstants.Contains('USE_CUDA'))" />
-      <PackageReference Include="Emgu.CV.runtime.windows.cuda" Version="4.7.0.5276" Condition="$(DefineConstants.Contains('USE_CUDA'))" />
+        <!-- OpenCV versions >= 4.8 are not compatible with current model for face detection -->
+        <PackageReference Include="Emgu.CV.runtime.windows" Version="4.7.0.5276" Condition="!$(DefineConstants.Contains('USE_CUDA'))"/>
+        <PackageReference Include="Emgu.CV.runtime.windows.cuda" Version="4.7.0.5276" Condition="$(DefineConstants.Contains('USE_CUDA'))"/>
 
-      <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0"/>
 
-      <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.18.0" Condition="!$(DefineConstants.Contains('USE_CUDA'))" />
-      <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.18.0" Condition="$(DefineConstants.Contains('USE_CUDA'))" />
-      <PackageReference Include="Serilog" Version="4.0.1" />
-      <PackageReference Include="Serilog.Exceptions" Version="8.4.0" />
-      <PackageReference Include="Serilog.Extensions.Hosting" Version="8.0.0" />
-      <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
+        <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.18.0" Condition="!$(DefineConstants.Contains('USE_CUDA'))"/>
+        <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.18.0" Condition="$(DefineConstants.Contains('USE_CUDA'))"/>
+        <PackageReference Include="Serilog" Version="4.0.1"/>
+        <PackageReference Include="Serilog.Exceptions" Version="8.4.0"/>
+        <PackageReference Include="Serilog.Extensions.Hosting" Version="8.0.0"/>
+        <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0"/>
 
-      <!-- These 2 packages are explicitly installed to avoid security warnings for transitive dependencies -->
-      <PackageReference Include="System.Private.Uri" Version="4.3.2" />
-      <PackageReference Include="System.Text.Json" Version="8.0.4" />
+        <!-- These 2 packages are explicitly installed to avoid security warnings for transitive dependencies -->
+        <PackageReference Include="System.Private.Uri" Version="4.3.2"/>
+        <PackageReference Include="System.Text.Json" Version="8.0.4"/>
     </ItemGroup>
 
     <ItemGroup>
-      <None Update="Models\face_detection.onnx">
-        <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-      </None>
-      <None Update="Models\lm_f.onnx">
-        <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-      </None>
+        <None Update="Models\face_detection.onnx">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+        <None Update="Models\lm_f.onnx">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+        <None Update="appsettings.json">
+          <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
     </ItemGroup>
+
+    <Target Name="RemoveUnusedFiles" AfterTargets="Publish">
+        <Delete Files="$(PublishDir)opencv_videoio_ffmpeg470_64.dll"/>
+
+        <Delete Files="$(PublishDir)cudnn_adv_infer64_8.dll" Condition="$(DefineConstants.Contains('USE_CUDA'))"/>
+        <Delete Files="$(PublishDir)cudnn_adv_train64_8.dll" Condition="$(DefineConstants.Contains('USE_CUDA'))"/>
+        <Delete Files="$(PublishDir)cudnn_cnn_train64_8.dll" Condition="$(DefineConstants.Contains('USE_CUDA'))"/>
+        <Delete Files="$(PublishDir)cudnn_ops_train64_8.dll" Condition="$(DefineConstants.Contains('USE_CUDA'))"/>
+        <Delete Files="$(PublishDir)curand64_10.dll" Condition="$(DefineConstants.Contains('USE_CUDA'))"/>
+        <Delete Files="$(PublishDir)npps64_12.dll" Condition="$(DefineConstants.Contains('USE_CUDA'))"/>
+    </Target>
 
 </Project>
