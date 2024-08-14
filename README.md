@@ -18,6 +18,14 @@ It aims to be cross-platform with possibility to use CUDA (GPU) for faster proce
 
 - [ ] Refactor and structure the code
 - [ ] Verify places that could be processed by CUDA
-- [ ] Dev environment setup + build instructions (download Emgu.CV package from custom source)
+- [x] Dev environment setup + build instructions (download Emgu.CV package from custom source)
 - [ ] Check if it works on Linux and MacOS
-- [ ] Publish scripts
+- [ ] Publish scripts and instructions
+
+## Local development setup
+
+* Download and install .NET >=8 SDK: https://dotnet.microsoft.com/en-us/download/dotnet/8.0
+* Clone the repository
+* Run the project in your IDE, or via command line with `dotnet run` (you can specify build configuration by adding `-c Release` or `-c Debug` flag)
+  * You can test CUDA version, by uncommenting the `<DefineConstants>USE_CUDA</DefineConstants>` line in `.csproj` file, or by specifying it in the command line: `dotnet run -c Release /p:DefineConstants=USE_CUDA`
+  * NOTE: if you are using CUDA, the first time you run/publish the project, it will take a while to load necessary Emgu.CV CUDA runtime packages, so be patient

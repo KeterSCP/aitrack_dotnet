@@ -49,9 +49,30 @@
             <CopyToOutputDirectory>Always</CopyToOutputDirectory>
         </None>
         <None Update="appsettings.json">
-          <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
         </None>
     </ItemGroup>
+
+    <PropertyGroup>
+        <SolutionDir Condition="$(SolutionDir) == '' Or $(SolutionDir) == '*Undefined*'">..\</SolutionDir>
+    </PropertyGroup>
+
+    <Target Name="DownloadEmguCvCudaNugets" BeforeTargets="Restore" Condition="$(DefineConstants.Contains('USE_CUDA'))">
+        <DownloadFile
+                SourceUrl="https://github.com/emgucv/emgucv/releases/download/4.7.0/Emgu.CV.runtime.windows.cuda.4.7.0.5276.nupkg"
+                DestinationFolder="$(SolutionDir)\LocalEmguCVNugetRepo">
+        </DownloadFile>
+
+        <DownloadFile
+                SourceUrl="https://github.com/emgucv/emgucv/releases/download/4.7.0/Emgu.runtime.windows.cuda.blas.lt.12.0.104.nupkg"
+                DestinationFolder="$(SolutionDir)\LocalEmguCVNugetRepo">
+        </DownloadFile>
+
+        <DownloadFile
+                SourceUrl="https://github.com/emgucv/emgucv/releases/download/4.7.0/Emgu.runtime.windows.cuda.dnn.cnn.infer.8.8.0.nupkg"
+                DestinationFolder="$(SolutionDir)\LocalEmguCVNugetRepo">
+        </DownloadFile>
+    </Target>
 
     <Target Name="RemoveUnusedFiles" AfterTargets="Publish">
         <Delete Files="$(PublishDir)opencv_videoio_ffmpeg470_64.dll"/>
