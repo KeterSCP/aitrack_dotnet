@@ -45,6 +45,10 @@ public class MainLoopHostedService : BackgroundService
         {
             Log.Warning("There is no CUDA device available, falling back to CPU. Consider downloading CPU version of the program.");
         }
+        else
+        {
+            Log.Information(CudaInvoke.GetCudaDevicesSummary());
+        }
 
         var cudaDeviceId = CudaInvoke.GetDevice();
 #endif
