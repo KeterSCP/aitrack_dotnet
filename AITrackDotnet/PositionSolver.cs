@@ -1,42 +1,39 @@
 ﻿using Emgu.CV;
-#if USE_CUDA
-using Emgu.CV.Cuda;
-#endif
 using Emgu.CV.CvEnum;
 
 namespace AITrackDotnet;
 
-internal class PositionSolver
+internal class PositionSolver : IDisposable
 {
     private const double ToRad = 3.14159265 / 180.0;
     private const double ToDeg = 180.0 / 3.14159265;
 
     private const int NbContourPointsBase = 18;
 
-    private static readonly int[] ContourIndices = [0, 1, 8, 15, 16, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 39, 42, 45];
-    private static readonly Mat LandmarkPointsBuffer = new(NbContourPointsBase, 1, DepthType.Cv32F, 2);
+    private readonly int[] _contourIndices = [0, 1, 8, 15, 16, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 39, 42, 45];
+    private readonly Mat _landmarkPointsBuffer = new(NbContourPointsBase, 1, DepthType.Cv32F, 2);
 
     private const double PriorPitch = -1.57;
     private const double PriorYaw = -1.57;
     private const double PriorDistance = -2.0;
 
     // Prior rotations and translation
-    private static readonly double[] Rv = [0, 0, 0];
-    private static readonly double[] Tv = [0, 0, 0];
+    private readonly double[] _rv = [0, 0, 0];
+    private readonly double[] _tv = [0, 0, 0];
 
-    private static readonly Mat Head3dScale = new(3, 3, DepthType.Cv64F, 1);
-    private static readonly Mat Mat3dContour = new(NbContourPointsBase, 3, DepthType.Cv64F, 1);
-    private static readonly Mat CameraMatrix = new(3, 3, DepthType.Cv64F, 1);
-    private static readonly Mat CameraDistortion = new(4, 1, DepthType.Cv64F, 1);
+    private readonly Mat _head3dScale = new(3, 3, DepthType.Cv64F, 1);
+    private readonly Mat _mat3dContour = new(NbContourPointsBase, 3, DepthType.Cv64F, 1);
+    private readonly Mat _cameraMatrix = new(3, 3, DepthType.Cv64F, 1);
+    private readonly Mat _cameraDistortion = new(4, 1, DepthType.Cv64F, 1);
 
     public PositionSolver(int imWidth, int imHeight, float fov, float xScale, float yScale, float zScale)
     {
-        Rv[0] = PriorPitch;
-        Rv[1] = PriorYaw;
-        Rv[2] = -1.57;
-        Tv[2] = PriorDistance;
+        _rv[0] = PriorPitch;
+        _rv[1] = PriorYaw;
+        _rv[2] = -1.57;
+        _tv[2] = PriorDistance;
 
-        Head3dScale.SetTo
+        _head3dScale.SetTo
         (
             [
                 yScale, 0.0, 0.0,
@@ -45,7 +42,7 @@ internal class PositionSolver
             ]
         );
 
-        Mat3dContour.SetTo
+        _mat3dContour.SetTo
         (
             [
                 0.45517698, -0.30089578, 0.76442945,
@@ -89,7 +86,7 @@ internal class PositionSolver
             focalLengthHeight = 0.5 * imHeight / Math.Tan(0.5 * fovH);
         }
 
-        CameraMatrix.SetTo
+        _cameraMatrix.SetTo
         (
             [
                 focalLengthHeight, 0, imHeight / 2d,
@@ -98,7 +95,7 @@ internal class PositionSolver
             ]
         );
 
-        CameraDistortion.SetTo([0, 0, 0, 0]);
+        _cameraDistortion.SetTo([0, 0, 0, 0]);
 
         // This was in original code, but it seems like it's not needed
 
@@ -121,23 +118,23 @@ internal class PositionSolver
 
     public unsafe void SolveRotation()
     {
-        var landmarkPointsBufferPtr = (float*)LandmarkPointsBuffer.GetDataPointer();
+        var landmarkPointsBufferPtr = (float*)_landmarkPointsBuffer.GetDataPointer();
 
         for (int j = 0; j < 2; j++)
         {
-            for (int i = 0; i < ContourIndices.Length; i++)
+            for (int i = 0; i < _contourIndices.Length; i++)
             {
-                var contourIdx = ContourIndices[i];
+                var contourIdx = _contourIndices[i];
                 landmarkPointsBufferPtr[2 * i + j] = FaceData.LandmarkCoords[2 * contourIdx + j];
             }
         }
 
-        using var rotationVector = new Mat(Rv.Length, 1, DepthType.Cv64F, 1);
-        rotationVector.SetTo(Rv);
-        using var translationVector = new Mat(Tv.Length, 1, DepthType.Cv64F, 1);
-        translationVector.SetTo(Tv);
+        using var rotationVector = new Mat(_rv.Length, 1, DepthType.Cv64F, 1);
+        rotationVector.SetTo(_rv);
+        using var translationVector = new Mat(_tv.Length, 1, DepthType.Cv64F, 1);
+        translationVector.SetTo(_tv);
 
-        CvInvoke.SolvePnP(Mat3dContour, LandmarkPointsBuffer, CameraMatrix, CameraDistortion, rotationVector, translationVector, useExtrinsicGuess: true, flags: SolvePnpMethod.Iterative);
+        CvInvoke.SolvePnP(_mat3dContour, _landmarkPointsBuffer, _cameraMatrix, _cameraDistortion, rotationVector, translationVector, useExtrinsicGuess: true, flags: SolvePnpMethod.Iterative);
 
         GetEuler(rotationVector, translationVector);
 
@@ -219,5 +216,14 @@ internal class PositionSolver
             <= 0.0 => 0.0,
             _ => FaceData.Rotation[2]
         };
+    }
+
+    public void Dispose()
+    {
+        _landmarkPointsBuffer.Dispose();
+        _head3dScale.Dispose();
+        _mat3dContour.Dispose();
+        _cameraMatrix.Dispose();
+        _cameraDistortion.Dispose();
     }
 }

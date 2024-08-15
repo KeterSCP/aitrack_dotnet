@@ -28,13 +28,6 @@ public class MainLoopHostedService : BackgroundService
         ["input"] = OnnxInputTensor
     };
 
-    private const bool UseCuda =
-#if USE_CUDA
-        true;
-#else
-        false;
-#endif
-
     private static readonly string[] OnnxOutputNames = ["output"];
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
@@ -43,15 +36,24 @@ public class MainLoopHostedService : BackgroundService
         return Task.CompletedTask;
     }
 
-    private unsafe void ProcessFrames(CancellationToken stoppingToken)
+    private static unsafe void ProcessFrames(CancellationToken stoppingToken)
     {
         Log.Information("Main loop is running...");
+
+#if USE_CUDA
+        if (!CudaInvoke.HasCuda)
+        {
+            Log.Warning("There is no CUDA device available, falling back to CPU. Consider downloading CPU version of the program.");
+        }
+
+        var cudaDeviceId = CudaInvoke.GetDevice();
+#endif
 
         using var camera = new VideoCapture(0, VideoCapture.API.DShow);
 
         UpdateCameraProperties(camera);
 
-        var positionSolver = new PositionSolver(camera.Width, camera.Height, 56, 1.0f, 1.0f, 1.0f);
+        using var positionSolver = new PositionSolver(imWidth: camera.Width, imHeight: camera.Height, fov: 56, xScale: 1.0f, yScale: 1.0f, zScale: 1.0f);
 
         using var mainMatCpu = new Mat();
         using var resizedMatCpu = new Mat();
@@ -63,7 +65,7 @@ public class MainLoopHostedService : BackgroundService
 
         using var sessionOptions =
 #if USE_CUDA
-            SessionOptions.MakeSessionOptionWithCudaProvider(deviceId: 0);
+            SessionOptions.MakeSessionOptionWithCudaProvider(deviceId: cudaDeviceId);
 #else
             // ReSharper disable once UsingStatementResourceInitialization
             new SessionOptions
@@ -74,13 +76,8 @@ public class MainLoopHostedService : BackgroundService
             IntraOpNumThreads = 1
         };
 #endif
-        using var session = new InferenceSession(@"models\lm_f.onnx", new SessionOptions
-        {
-            GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_EXTENDED,
-            ExecutionMode = ExecutionMode.ORT_SEQUENTIAL,
-            InterOpNumThreads = 1,
-            IntraOpNumThreads = 1
-        });
+
+        using var session = new InferenceSession(@"Models\lm_f_fixed.onnx", sessionOptions);
 
 #if USE_CUDA
         using var mainMatGpu = new GpuMat();
@@ -90,7 +87,7 @@ public class MainLoopHostedService : BackgroundService
 #endif
 
         UpdateResizeProperties(out var resizedSize, out var resizeScaleX, out var resizeScaleY, camera);
-        using var faceDetector = CreateFaceDetector(UseCuda, resizedSize);
+        using var faceDetector = CreateFaceDetector(resizedSize);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -270,7 +267,7 @@ public class MainLoopHostedService : BackgroundService
         cam.Set(CapProp.FrameHeight, AppSettings.CameraHeight);
     }
 
-    private static FaceDetectorYN CreateFaceDetector(bool useCuda, Size inputSize)
+    private static FaceDetectorYN CreateFaceDetector(Size inputSize)
     {
         return new FaceDetectorYN(
             model: @"Models\face_detection.onnx",
@@ -279,8 +276,14 @@ public class MainLoopHostedService : BackgroundService
             scoreThreshold: 0.8f,
             nmsThreshold: 0.5f,
             topK: 1,
-            backendId: useCuda ? Emgu.CV.Dnn.Backend.Cuda : Emgu.CV.Dnn.Backend.Default,
-            targetId: useCuda ? Target.Cuda : Target.Cpu
+#if USE_CUDA
+            backendId: Emgu.CV.Dnn.Backend.Cuda,
+            targetId: Target.Cuda
+
+#else
+            backendId: Emgu.CV.Dnn.Backend.Default,
+            targetId: Target.Cpu
+#endif
         );
     }
 

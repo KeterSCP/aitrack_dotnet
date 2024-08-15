@@ -7,12 +7,19 @@ It aims to be cross-platform with possibility to use CUDA (GPU) for faster proce
 ## Changes from the original project
 
 - No GUI for configuration - everything can be configured (with live reloading) via a JSON file appsettings.json
-- Only 1 model is used for landmarks detection, originally known as "Fast" (lm_f.onnx)
+- Only 1 model is used for landmarks detection, originally known as "Fast" (lm_f.onnx):
+  - It was slightly modified so `FusedConv` nodes with `Clip` activation were replaced with `Relu` + `Min` activation, because ONNX CUDA runtime does not support `Clip` activation
 - Support for PS3 camera is not included, only WebCam is supported
 
 ## Current status
 
 - On windows both CUDA and CPU versions work, and correctly send data to the OpenTrack via UDP
+
+## How to use
+- Download the latest release from the [releases page](https://github.com/KeterSCP/aitrack_dotnet/releases)
+- Extract the archive
+- Run the `AITrackDotnet.exe` file
+- If needed, edit the `appsettings.json` file to configure the application. There is no need to restart the application, the changes will be applied automatically after 300ms delay.
 
 ## TODO
 
